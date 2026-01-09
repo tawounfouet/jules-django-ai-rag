@@ -1,0 +1,84 @@
+upstream hello_django {
+    server web:8000;
+}
+
+upstream minio_s3 {
+    server minio:9000;
+}
+
+upstream minio_console {
+    server minio:9001;
+}
+
+server {
+    listen 80;
+    server_name ${DOMAIN_NAME} localhost;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN_NAME} localhost;
+
+    # SSL Certificates - Dummy paths for now, Certbot will populate them
+    # IMPORTANT: On first run, Nginx will fail if these files don't exist.
+    # A common strategy is to start with a dummy cert or comment these out until certbot runs.
+    # For this template, I'll assume usage of self-signed or user needs to init.
+    # BUT, to make it "just work" for the user, we often use a script to generate dummy certs first.
+    # For now, I will point to them, but note that the user needs to run the init script.
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem;
+
+    location /static/ {
+        alias /app/staticfiles/;
+    }
+
+    location /media/ {
+        # Proxy to MinIO
+        proxy_set_header Host minio:9000;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 300;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        chunked_transfer_encoding off;
+
+        proxy_pass http://minio_s3;
+    }
+
+    location /api/ {
+        proxy_pass http://hello_django;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+        proxy_redirect off;
+    }
+
+    location /admin/ {
+        proxy_pass http://hello_django;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+        proxy_redirect off;
+    }
+
+    # MinIO Console access (optional, maybe on a different port or path)
+    location /minio/ui/ {
+        rewrite ^/minio/ui/(.*) /$1 break;
+        proxy_pass http://minio_console;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

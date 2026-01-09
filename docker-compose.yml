@@ -3,17 +3,21 @@ version: '3.8'
 services:
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    command: gunicorn cogniflow.wsgi:application --bind 0.0.0.0:8000
     volumes:
       - .:/app
-    ports:
-      - "8000:8000"
+      - static_volume:/app/staticfiles
     depends_on:
       - db
       - redis
       - chroma
+      - minio
     env_file:
       - .env
+    environment:
+      - USE_S3=True
+      - MINIO_ENDPOINT_URL=http://minio:9000
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
 
   celery_worker:
     build: .
@@ -24,8 +28,12 @@ services:
       - db
       - redis
       - chroma
+      - minio
     env_file:
       - .env
+    environment:
+      - USE_S3=True
+      - MINIO_ENDPOINT_URL=http://minio:9000
 
   db:
     image: postgres:15
@@ -46,6 +54,61 @@ services:
     ports:
       - "8001:8000"
 
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      /usr/bin/mc mb --ignore-existing myminio/${MINIO_BUCKET_NAME:-cogniflow-media};
+      exit 0;
+      "
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+      - static_volume:/app/staticfiles
+    depends_on:
+      - web
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
 volumes:
   postgres_data:
   chroma_data:
+  minio_data:
+  static_volume:

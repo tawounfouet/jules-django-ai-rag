@@ -97,9 +97,35 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = 'static/'
-MEDIA_URL = 'media/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# MinIO / S3 Settings
+USE_S3 = os.getenv('USE_S3', 'False') == 'True'
+
+if USE_S3:
+    AWS_ACCESS_KEY_ID = os.getenv('MINIO_ROOT_USER', 'minioadmin')
+    AWS_SECRET_ACCESS_KEY = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin')
+    AWS_STORAGE_BUCKET_NAME = os.getenv('MINIO_BUCKET_NAME', 'cogniflow-media')
+    AWS_S3_ENDPOINT_URL = os.getenv('MINIO_ENDPOINT_URL', 'http://minio:9000')
+    AWS_S3_REGION_NAME = 'us-east-1'  # MinIO generic region
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    # Start file urls with the endpoint url
+    AWS_S3_CUSTOM_DOMAIN = f"{os.getenv('DOMAIN_NAME', 'localhost')}/media"
+    # Or if we want to bypass nginx for media (direct minio access):
+    # AWS_S3_CUSTOM_DOMAIN = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}"
+    # BUT we usually want to proxy via Nginx or serve directly if public.
+    # For now, let's keep it simple: usage of django-storages will generate urls.
+    # If we want signed urls:
+    AWS_QUERYSTRING_AUTH = True
+else:
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
